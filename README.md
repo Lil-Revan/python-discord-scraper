@@ -1,14 +1,16 @@
 # Python Discord Crypto Bot
 
-This project now provides a crypto-focused `/price` slash command for Discord.
+This project provides a crypto-focused `/price` slash command for Discord with a dark, market-style chart and quote-currency switch buttons.
 
 ## What it does
 
 - Accepts `/price symbol:<CODE>`
 - Fetches current crypto prices and recent price history from CoinGecko
-- Generates a PNG line chart with matplotlib
+- Generates a premium dark-theme PNG chart with matplotlib
 - Sends the chart back to the same Discord channel
-- Handles unsupported symbols and missing history with clear error messages
+- Adds Discord buttons for `USD`, `EUR`, `JPY`, and `GBP`
+- Re-renders the same symbol in the selected quote currency when a button is clicked
+- Handles unsupported symbols, currencies, and missing history with clear error messages
 
 ## Project structure
 
@@ -52,6 +54,7 @@ venv\Scripts\python.exe main.py
 ## Notes
 
 - `/price` expects symbols like `BTC`, `ETH`, `SOL`, `XRP`, `ADA`, or `DOGE`.
+- The chart defaults to `USD` and can be switched to `EUR`, `JPY`, or `GBP` with Discord buttons.
 - CoinGecko symbol matching is market-based, so the command picks the highest market-cap asset for the exact symbol match.
-- `COINGECKO_API_KEY` is optional for this first implementation, but the config already supports it.
-- The structure is ready for future scraper-based commands under `bot/commands` and `bot/services`.
+- `COINGECKO_API_KEY` is optional for this implementation, but the config already supports it.
+- The command/view structure is ready for future additions like timeframe buttons.

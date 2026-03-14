@@ -6,6 +6,9 @@ from typing import Any
 
 import aiohttp
 
+SUPPORTED_VS_CURRENCIES = ("usd", "eur", "jpy", "gbp")
+_SUPPORTED_VS_CURRENCY_SET = set(SUPPORTED_VS_CURRENCIES)
+
 
 @dataclass(frozen=True)
 class PricePoint:
@@ -34,6 +37,10 @@ class UnsupportedSymbolError(CryptoServiceError):
     pass
 
 
+class UnsupportedCurrencyError(CryptoServiceError):
+    pass
+
+
 class MissingPriceDataError(CryptoServiceError):
     pass
 
@@ -47,10 +54,20 @@ class CoinGeckoCryptoService:
         api_key: str | None = None,
     ) -> None:
         self.session = session
-        self.vs_currency = vs_currency.lower()
+        self.default_vs_currency = self.normalize_vs_currency(vs_currency)
         self.history_days = history_days
         self.api_key = api_key
         self.base_url = "https://api.coingecko.com/api/v3"
+
+    @staticmethod
+    def normalize_vs_currency(vs_currency: str) -> str:
+        normalized_currency = vs_currency.strip().lower()
+        if normalized_currency not in _SUPPORTED_VS_CURRENCY_SET:
+            supported = ", ".join(currency.upper() for currency in SUPPORTED_VS_CURRENCIES)
+            raise UnsupportedCurrencyError(
+                f"Unsupported quote currency '{vs_currency.upper()}'. Supported currencies: {supported}."
+            )
+        return normalized_currency
 
     async def _get_json(self, path: str, params: dict[str, Any]) -> Any:
         headers = {
@@ -73,11 +90,11 @@ class CoinGeckoCryptoService:
                 raise CryptoServiceError(f"CoinGecko request failed: {message}")
             return await response.json()
 
-    async def _lookup_asset(self, symbol: str) -> dict[str, Any]:
+    async def _lookup_asset(self, symbol: str, vs_currency: str) -> dict[str, Any]:
         markets = await self._get_json(
             "/coins/markets",
             {
-                "vs_currency": self.vs_currency,
+                "vs_currency": vs_currency,
                 "symbols": symbol,
                 "include_tokens": "top",
                 "order": "market_cap_desc",
@@ -117,20 +134,24 @@ class CoinGeckoCryptoService:
         points = [PricePoint(day=point_day, price=price) for point_day, price in sorted(daily_points.items())]
         return points[-self.history_days :]
 
-    async def get_snapshot(self, symbol: str) -> CryptoSnapshot:
+    async def get_snapshot(self, symbol: str, vs_currency: str | None = None) -> CryptoSnapshot:
         normalized_symbol = symbol.strip().upper()
         if not normalized_symbol or not normalized_symbol.replace("-", "").isalnum():
             raise UnsupportedSymbolError("Please provide a valid crypto symbol such as BTC, ETH, SOL, XRP, ADA, or DOGE.")
 
-        asset = await self._lookup_asset(normalized_symbol)
+        resolved_vs_currency = self.normalize_vs_currency(vs_currency or self.default_vs_currency)
+        asset = await self._lookup_asset(normalized_symbol, resolved_vs_currency)
         coin_id = str(asset.get("id", "")).strip()
+        if not coin_id:
+            raise MissingPriceDataError(f"CoinGecko returned incomplete asset data for {normalized_symbol}.")
+
         name = str(asset.get("name", normalized_symbol)).strip() or normalized_symbol
         current_price = asset.get("current_price")
 
         history = await self._get_json(
             f"/coins/{coin_id}/market_chart",
             {
-                "vs_currency": self.vs_currency,
+                "vs_currency": resolved_vs_currency,
                 "days": self.history_days,
                 "interval": "daily",
                 "precision": "full",
@@ -140,7 +161,9 @@ class CoinGeckoCryptoService:
         raw_prices = history.get("prices", []) if isinstance(history, dict) else []
         points = self._normalize_points(raw_prices)
         if not points:
-            raise MissingPriceDataError(f"CoinGecko returned no recent price history for {normalized_symbol}.")
+            raise MissingPriceDataError(
+                f"CoinGecko returned no recent price history for {normalized_symbol} in {resolved_vs_currency.upper()}."
+            )
 
         resolved_current_price = float(current_price) if current_price is not None else points[-1].price
         price_change_24h = asset.get("price_change_percentage_24h")
@@ -151,7 +174,7 @@ class CoinGeckoCryptoService:
             symbol=normalized_symbol,
             name=name,
             coin_id=coin_id,
-            vs_currency=self.vs_currency,
+            vs_currency=resolved_vs_currency,
             current_price=resolved_current_price,
             points=points,
             price_change_24h=float(price_change_24h) if price_change_24h is not None else None,
